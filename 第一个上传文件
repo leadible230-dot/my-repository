@@ -1,0 +1,189 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <cstdlib>
+using namespace std;
+
+// --- 全局变量区 (方便各个函数直接使用) ---
+int N; // 用户输入的棋盘大小
+vector<vector<int>> VALID_PATTERNS; // 存储预先算好的所有合法行
+vector<vector<int>> board;          // 当前正在解的棋盘
+struct Constraint { int r, c, color; }; // 结构体：存用户限制
+vector<Constraint> constraints;     // 存放所有用户限制
+long long solution_count = 0;       // 统计解的个数
+
+// --- 辅助工具：判断单行是否合法 ---
+bool is_single_row_valid(const vector<int>& row) {
+    int c0 = 0, c1 = 0;
+    // 新用法：范围for循环 (Range-based for loop)
+    // 意思：对于 row 里的每一个元素 x
+    for (int x : row) {
+        if (x == 0) c0++; else c1++;
+    }
+    if (c0 != N/2 || c1 != N/2) return false; // 0和1必须各占一半
+
+    // 检查是否有连续3个相同
+    for (size_t i = 0; i < row.size() - 2; ++i) {
+        if (row[i] == row[i+1] && row[i] == row[i+2]) return false;
+    }
+    return true;
+}
+
+// --- 核心1：递归生成所有可能的行 ---
+void generate_patterns_recursive(vector<int>& current) {
+    // 这里的逻辑就是第2课讲的
+    if (current.size() == (size_t)N) {
+        if (is_single_row_valid(current)) {
+            VALID_PATTERNS.push_back(current);
+        }
+        return;
+    }
+    // 试填0
+    current.push_back(0);
+    generate_patterns_recursive(current);
+    current.pop_back(); // 回溯
+
+    // 试填1
+    current.push_back(1);
+    generate_patterns_recursive(current);
+    current.pop_back(); // 回溯
+}
+
+// --- 辅助工具：纵向检查 (最关键的剪枝) ---
+// 检查把 pattern 这一行放到 row_idx 这一行时，竖直方向是否合法
+bool check_vertical(int row_idx, const vector<int>& pattern) {
+    for (int col = 0; col < N; ++col) {
+        // 1. 检查竖向三连
+        // 如果当前是第2行或更多(row_idx >= 2)，需要检查上面两行
+        if (row_idx >= 2) {
+            if (board[row_idx-1][col] == pattern[col] && 
+                board[row_idx-2][col] == pattern[col]) {
+                return false; // 上面两个和现在这个一样，构成三连，非法！
+            }
+        }
+        
+        // 2. 检查单列颜色数量是否超标
+        int current_color = pattern[col];
+        int same_color_count = 1; // 算上自己这一个
+
+        // 往上看
+        for (int k = 0; k < row_idx; ++k) {
+            if (board[k][col] == current_color) same_color_count++;
+        }
+        if (same_color_count > N / 2) return false; // 这列这种颜色太多了
+    }
+    return true;
+}
+
+// --- 辅助工具：检查是否符合用户输入 ---
+bool check_constraints(int row_idx, const vector<int>& pattern) {
+    for (const auto& cons : constraints) {
+        // 如果用户限制的是当前这一行
+        if (cons.r == row_idx) {
+            // 如果这一行的那一列的值 不等于 用户指定的颜色
+            if (pattern[cons.c] != cons.color) return false;
+        }
+    }
+    return true;
+}
+
+// --- 辅助工具：检查所有列是否唯一 (全盘生成完再查) ---
+bool are_cols_unique() {
+    for (int c1 = 0; c1 < N; ++c1) {
+        for (int c2 = c1 + 1; c2 < N; ++c2) {
+            bool same = true;
+            for (int r = 0; r < N; ++r) {
+                if (board[r][c1] != board[r][c2]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return false; // 找到两列完全一样
+        }
+    }
+    return true;
+}
+
+// --- 核心2：回溯求解器 ---
+void solve(int row_idx) {
+    // 1. 到底了，N行都填完了
+    if (row_idx == N) {
+        if (are_cols_unique()) {
+            solution_count++;
+            cout << "发现第 " << solution_count << " 种解法：" << endl;
+            // 简单打印
+            for(int i=0; i<N; i++) {
+                for(int j=0; j<N; j++) {
+                    cout << (board[i][j] == 0 ? "●" : "○") << " ";
+                }
+                cout << endl;
+            }
+            cout << "-------------------" << endl;
+        }
+        return;
+    }
+
+    // 2. 尝试每一行合法的模式
+    // const auto& 是为了引用，不拷贝，速度快
+    for (const auto& pattern : VALID_PATTERNS) {
+        
+        // 剪枝1: 行不能重复
+        bool row_repeat = false;
+        for(int k=0; k<row_idx; k++) {
+            if(board[k] == pattern) { row_repeat = true; break; }
+        }
+        if (row_repeat) continue;
+
+        // 剪枝2: 必须符合用户限制
+        if (!check_constraints(row_idx, pattern)) continue;
+
+        // 剪枝3: 纵向规则
+        if (!check_vertical(row_idx, pattern)) continue;
+
+        // 通过所有检查，填入！
+        board[row_idx] = pattern;
+        
+        // 递归下一行
+        solve(row_idx + 1);
+        
+        // 这里不需要显式撤销，因为循环回来后 board[row_idx] 会被覆盖
+    }
+}
+
+// --- 主程序 ---
+int main() {
+    system("chcp 65001"); 
+    // 1. 输入 N
+    cout << "请输入 N (必须是偶数): ";
+    cin >> N;
+    if (N % 2 != 0) { cout << "N必须是偶数"; return 0; }
+
+    // 2. 预处理：生成所有合法行
+    // vector 的 resize 用法：把数组大小设为 N
+    board.resize(N, vector<int>(N)); 
+    vector<int> temp_row;
+    generate_patterns_recursive(temp_row);
+    cout << "预计算完成，单行合法模式有: " << VALID_PATTERNS.size() << " 种" << endl;
+
+    // 3. 输入用户限制
+    int k;
+    cout << "输入已存在的棋子数量: ";
+    cin >> k;
+    for(int i=0; i<k; i++) {
+        int r, c;
+        string col_str;
+        cout << "输入第" << i+1 << "个棋子 (行 列 颜色): ";
+        cin >> r >> c >> col_str;
+        // 注意：用户输入习惯是 1 开始，我们要减去 1 变成 0 开始
+        constraints.push_back({r-1, c-1, (col_str=="黑"?0:1)});
+    }
+
+    // 4. 开始解题
+    cout << "开始计算..." << endl;
+    solve(0); // 从第0行开始解
+    
+    cout << "总共找到 " << solution_count << " 种解法。" << endl;
+
+    return 0;
+}
+
